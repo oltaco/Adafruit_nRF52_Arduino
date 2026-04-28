@@ -1,0 +1,11 @@
+{
+  "description": "Adafruit Arduino Framework for NRF52",
+  "name": "framework-arduinoadafruitnrf52",
+  "url": "https://github.com/meshcore-dev/Adafruit_nRF52_Arduino",
+  "version": "1.10701.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meshcore-dev/Adafruit_nRF52_Arduino"
+  }
+
+}
