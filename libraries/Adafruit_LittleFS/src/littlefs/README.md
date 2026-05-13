@@ -1,6 +1,6 @@
-## The little filesystem
+## littlefs
 
-A little fail-safe filesystem designed for embedded systems.
+A little fail-safe filesystem designed for microcontrollers.
 
 ```
    | | |     .---._____
@@ -11,17 +11,19 @@ A little fail-safe filesystem designed for embedded systems.
    | | |
 ```
 
-**Bounded RAM/ROM** - The littlefs is designed to work with a limited amount
-of memory. Recursion is avoided and dynamic memory is limited to configurable
-buffers that can be provided statically.
+**Power-loss resilience** - littlefs is designed to handle random power
+failures. All file operations have strong copy-on-write guarantees and if
+power is lost the filesystem will fall back to the last known good state.
 
-**Power-loss resilient** - The littlefs is designed for systems that may have
-random power failures. The littlefs has strong copy-on-write guarantees and
-storage on disk is always kept in a valid state.
+**Dynamic wear leveling** - littlefs is designed with flash in mind, and
+provides wear leveling over dynamic blocks. Additionally, littlefs can
+detect bad blocks and work around them.
 
-**Wear leveling** - Since the most common form of embedded storage is erodible
-flash memories, littlefs provides a form of dynamic wear leveling for systems
-that can not fit a full flash translation layer.
+**Bounded RAM/ROM** - littlefs is designed to work with a small amount of
+memory. RAM usage is strictly bounded, which means RAM consumption does not
+change as the filesystem grows. The filesystem contains no unbounded
+recursion and dynamic memory is limited to configurable buffers that can be
+provided statically.
 
 ## Example
 
@@ -49,7 +51,9 @@ const struct lfs_config cfg = {
     .prog_size = 16,
     .block_size = 4096,
     .block_count = 128,
-    .lookahead = 128,
+    .cache_size = 16,
+    .lookahead_size = 16,
+    .block_cycles = 500,
 };
 
 // entry point
@@ -90,11 +94,11 @@ int main(void) {
 Detailed documentation (or at least as much detail as is currently available)
 can be found in the comments in [lfs.h](lfs.h).
 
-As you may have noticed, littlefs takes in a configuration structure that
-defines how the filesystem operates. The configuration struct provides the
-filesystem with the block device operations and dimensions, tweakable
-parameters that tradeoff memory usage for performance, and optional
-static buffers if the user wants to avoid dynamic memory.
+littlefs takes in a configuration structure that defines how the filesystem
+operates. The configuration struct provides the filesystem with the block
+device operations and dimensions, tweakable parameters that tradeoff memory
+usage for performance, and optional static buffers if the user wants to avoid
+dynamic memory.
 
 The state of the littlefs is stored in the `lfs_t` type which is left up
 to the user to allocate, allowing multiple filesystems to be in use
@@ -106,14 +110,17 @@ directory functions, with the deviation that the allocation of filesystem
 structures must be provided by the user.
 
 All POSIX operations, such as remove and rename, are atomic, even in event
-of power-loss. Additionally, no file updates are actually committed to the
-filesystem until sync or close is called on the file.
+of power-loss. Additionally, file updates are not actually committed to
+the filesystem until sync or close is called on the file.
 
 ## Other notes
 
-All littlefs have the potential to return a negative error code. The errors
-can be either one of those found in the `enum lfs_error` in [lfs.h](lfs.h),
-or an error returned by the user's block device operations.
+Littlefs is written in C, and specifically should compile with any compiler
+that conforms to the `C99` standard.
+
+All littlefs calls have the potential to return a negative error code. The
+errors can be either one of those found in the `enum lfs_error` in
+[lfs.h](lfs.h), or an error returned by the user's block device operations.
 
 In the configuration struct, the `prog` and `erase` function provided by the
 user may return a `LFS_ERR_CORRUPT` error if the implementation already can
@@ -127,30 +134,117 @@ from memory, otherwise data integrity can not be guaranteed. If the `write`
 function does not perform caching, and therefore each `read` or `write` call
 hits the memory, the `sync` function can simply return 0.
 
-## Reference material
+## Design
 
-[DESIGN.md](DESIGN.md) - DESIGN.md contains a fully detailed dive into how
-littlefs actually works. I would encourage you to read it since the
-solutions and tradeoffs at work here are quite interesting.
+At a high level, littlefs is a block based filesystem that uses small logs to
+store metadata and larger copy-on-write (COW) structures to store file data.
 
-[SPEC.md](SPEC.md) - SPEC.md contains the on-disk specification of littlefs
-with all the nitty-gritty details. Can be useful for developing tooling.
+In littlefs, these ingredients form a sort of two-layered cake, with the small
+logs (called metadata pairs) providing fast updates to metadata anywhere on
+storage, while the COW structures store file data compactly and without any
+wear amplification cost.
+
+Both of these data structures are built out of blocks, which are fed by a
+common block allocator. By limiting the number of erases allowed on a block
+per allocation, the allocator provides dynamic wear leveling over the entire
+filesystem.
+
+```
+                    root
+                   .--------.--------.
+                   | A'| B'|         |
+                   |   |   |->       |
+                   |   |   |         |
+                   '--------'--------'
+                .----'   '--------------.
+       A       v                 B       v
+      .--------.--------.       .--------.--------.
+      | C'| D'|         |       | E'|new|         |
+      |   |   |->       |       |   | E'|->       |
+      |   |   |         |       |   |   |         |
+      '--------'--------'       '--------'--------'
+      .-'   '--.                  |   '------------------.
+     v          v              .-'                        v
+.--------.  .--------.        v                       .--------.
+|   C    |  |   D    |   .--------.       write       | new E  |
+|        |  |        |   |   E    |        ==>        |        |
+|        |  |        |   |        |                   |        |
+'--------'  '--------'   |        |                   '--------'
+                         '--------'                   .-'    |
+                         .-'    '-.    .-------------|------'
+                        v          v  v              v
+                   .--------.  .--------.       .--------.
+                   |   F    |  |   G    |       | new F  |
+                   |        |  |        |       |        |
+                   |        |  |        |       |        |
+                   '--------'  '--------'       '--------'
+```
+
+More details on how littlefs works can be found in [DESIGN.md](DESIGN.md) and
+[SPEC.md](SPEC.md).
+
+- [DESIGN.md](DESIGN.md) - A fully detailed dive into how littlefs works.
+  I would suggest reading it as the tradeoffs at work are quite interesting.
+
+- [SPEC.md](SPEC.md) - The on-disk specification of littlefs with all the
+  nitty-gritty details. May be useful for tooling development.
 
 ## Testing
 
 The littlefs comes with a test suite designed to run on a PC using the
-[emulated block device](emubd/lfs_emubd.h) found in the emubd directory.
+[emulated block device](bd/lfs_emubd.h) found in the `bd` directory.
 The tests assume a Linux environment and can be started with make:
 
 ``` bash
 make test
 ```
 
+Tests are implemented in C in the .toml files found in the `tests` directory.
+When developing a feature or fixing a bug, it is frequently useful to run a
+single test case or suite of tests:
+
+``` bash
+./scripts/test.py -l runners/test_runner  # list available test suites
+./scripts/test.py -L runners/test_runner test_dirs  # list available test cases
+./scripts/test.py runners/test_runner test_dirs  # run a specific test suite
+```
+
+If an assert fails in a test, test.py will try to print information about the
+failure:
+
+``` bash
+tests/test_dirs.toml:1:failure: test_dirs_root:1g12gg2 (PROG_SIZE=16, ERASE_SIZE=512) failed
+tests/test_dirs.toml:5:assert: assert failed with 0, expected eq 42
+    lfs_mount(&lfs, cfg) => 42;
+```
+
+This includes the test id, which can be passed to test.py to run only that
+specific test permutation:
+
+``` bash
+./scripts/test.py runners/test_runner test_dirs_root:1g12gg2  # run a specific test permutation
+./scripts/test.py runners/test_runner test_dirs_root:1g12gg2 --gdb  # drop into gdb on failure
+```
+
+Some other flags that may be useful:
+
+```bash
+./scripts/test.py runners/test_runner -b -j  # run tests in parallel
+./scripts/test.py runners/test_runner -v -O-  # redirect stdout to stdout
+./scripts/test.py runners/test_runner -ddisk  # capture resulting disk image
+```
+
+See `-h/--help` for a full list of available flags:
+
+``` bash
+./scripts/test.py --help
+```
+
 ## License
 
-The littlefs is provided under the [BSD-3-Clause](https://spdx.org/licenses/BSD-3-Clause.html)
-license. See [LICENSE.md](LICENSE.md) for more information. Contributions to
-this project are accepted under the same license.
+The littlefs is provided under the [BSD-3-Clause] license. See
+[LICENSE.md](LICENSE.md) for more information. Contributions to this project
+are accepted under the same license.
 
 Individual files contain the following tag instead of the full license text.
 
@@ -161,17 +255,88 @@ License Identifiers that are here available: http://spdx.org/licenses/
 
 ## Related projects
 
-[Mbed OS](https://github.com/ARMmbed/mbed-os/tree/master/features/filesystem/littlefs) -
-The easiest way to get started with littlefs is to jump into [Mbed](https://os.mbed.com/),
-which already has block device drivers for most forms of embedded storage. The
-littlefs is available in Mbed OS as the [LittleFileSystem](https://os.mbed.com/docs/latest/reference/littlefilesystem.html)
-class.
+- [littlefs-fuse] - A [FUSE] wrapper for littlefs. The project allows you to
+  mount littlefs directly on a Linux machine. Can be useful for debugging
+  littlefs if you have an SD card handy.
 
-[littlefs-fuse](https://github.com/geky/littlefs-fuse) - A [FUSE](https://github.com/libfuse/libfuse)
-wrapper for littlefs. The project allows you to mount littlefs directly on a
-Linux machine. Can be useful for debugging littlefs if you have an SD card
-handy.
+- [littlefs-js] - A javascript wrapper for littlefs. I'm not sure why you would
+  want this, but it is handy for demos.  You can see it in action
+  [here][littlefs-js-demo].
+  
+- [littlefs-python] - A Python wrapper for littlefs. The project allows you
+  to create images of the filesystem on your PC. Check if littlefs will fit
+  your needs, create images for a later download to the target memory or
+  inspect the content of a binary image of the target memory.
 
-[littlefs-js](https://github.com/geky/littlefs-js) - A javascript wrapper for
-littlefs. I'm not sure why you would want this, but it is handy for demos.
-You can see it in action [here](http://littlefs.geky.net/demo.html).
+- [littlefs-toy] - A command-line tool for creating and working with littlefs
+  images. Uses syntax similar to tar command for ease of use. Supports working
+  on littlefs images embedded inside another file (firmware image, etc).
+
+- [littlefs2-rust] - A Rust wrapper for littlefs. This project allows you
+  to use littlefs in a Rust-friendly API, reaping the benefits of Rust's memory
+  safety and other guarantees.
+
+- [nim-littlefs] - A Nim wrapper and API for littlefs. Includes a fuse
+  implementation based on [littlefs-fuse]
+
+- [chamelon] - A pure-OCaml implementation of (most of) littlefs, designed for
+  use with the MirageOS library operating system project. It is interoperable
+  with the reference implementation, with some caveats.
+
+- [littlefs-disk-img-viewer] - A memory-efficient web application for viewing
+  littlefs disk images in your web browser.
+
+- [mklfs] - A command line tool for creating littlefs images. Used in the Lua
+  RTOS ecosystem.
+
+- [mklittlefs] - A command line tool for creating littlefs images. Used in the
+  ESP8266 and RP2040 ecosystem.
+
+- [pico-littlefs-usb] - An interface for littlefs that emulates a FAT12
+  filesystem over USB. Allows mounting littlefs on a host PC without additional
+  drivers.
+
+- [ramcrc32bd] - An example block device using littlefs's 32-bit CRC for
+  error-correction.
+
+- [ramrsbd] - An example block device using Reed-Solomon codes for
+  error-correction.
+
+- [Mbed OS] - The easiest way to get started with littlefs is to jump into Mbed
+  which already has block device drivers for most forms of embedded storage.
+  littlefs is available in Mbed OS as the [LittleFileSystem] class.
+
+- [SPIFFS] - Another excellent embedded filesystem for NOR flash. As a more
+  traditional logging filesystem with full static wear-leveling, SPIFFS will
+  likely outperform littlefs on small memories such as the internal flash on
+  microcontrollers.
+
+- [Dhara] - An interesting NAND flash translation layer designed for small
+  MCUs. It offers static wear-leveling and power-resilience with only a fixed
+  _O(|address|)_ pointer structure stored on each block and in RAM.
+
+- [ChaN's FatFs] - A lightweight reimplementation of the infamous FAT filesystem
+  for microcontroller-scale devices. Due to limitations of FAT it can't provide
+  power-loss resilience, but it does allow easy interop with PCs.
+
+[BSD-3-Clause]: https://spdx.org/licenses/BSD-3-Clause.html
+[littlefs-fuse]: https://github.com/geky/littlefs-fuse
+[FUSE]: https://github.com/libfuse/libfuse
+[littlefs-js]: https://github.com/geky/littlefs-js
+[littlefs-js-demo]:http://littlefs.geky.net/demo.html
+[littlefs-python]: https://pypi.org/project/littlefs-python/
+[littlefs-toy]: https://github.com/tjko/littlefs-toy
+[littlefs2-rust]: https://crates.io/crates/littlefs2
+[nim-littlefs]: https://github.com/Graveflo/nim-littlefs
+[chamelon]: https://github.com/yomimono/chamelon
+[littlefs-disk-img-viewer]: https://github.com/tniessen/littlefs-disk-img-viewer
+[mklfs]: https://github.com/whitecatboard/Lua-RTOS-ESP32/tree/master/components/mklfs/src
+[mklittlefs]: https://github.com/earlephilhower/mklittlefs
+[pico-littlefs-usb]: https://github.com/oyama/pico-littlefs-usb
+[ramcrc32bd]: https://github.com/geky/ramcrc32bd
+[ramrsbd]: https://github.com/geky/ramrsbd
+[Mbed OS]: https://github.com/armmbed/mbed-os
+[LittleFileSystem]: https://os.mbed.com/docs/mbed-os/latest/apis/littlefilesystem.html
+[SPIFFS]: https://github.com/pellepl/spiffs
+[Dhara]: https://github.com/dlbeer/dhara
+[ChaN's FatFs]: http://elm-chan.org/fsw/ff/00index_e.html
