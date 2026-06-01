@@ -110,12 +110,15 @@ static struct lfs_config _InternalFSConfig =
   .prog_size = LFS_BLOCK_SIZE,
   .block_size = LFS_BLOCK_SIZE,
   .block_count = LFS_FLASH_TOTAL_SIZE / LFS_BLOCK_SIZE,
-  .lookahead = 128,
+  .block_cycles = 512,
+  .cache_size = LFS_BLOCK_SIZE,
+  .lookahead_size = 32,
+  .compact_thresh = 0,
 
+  // Buffers (set to NULL for dynamic allocation)
   .read_buffer = NULL,
   .prog_buffer = NULL,
-  .lookahead_buffer = NULL,
-  .file_buffer = NULL
+  .lookahead_buffer = NULL
 };
 
 InternalFileSystem InternalFS;
