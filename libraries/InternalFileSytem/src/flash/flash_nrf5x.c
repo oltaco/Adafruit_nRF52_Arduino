@@ -49,7 +49,7 @@ static SemaphoreHandle_t _sem = NULL;
 static uint32_t _flash_op_result = NRF_EVT_FLASH_OPERATION_SUCCESS;
 
 // Flash Abstraction Layer
-static bool fal_erase (uint32_t addr);
+bool fal_erase (uint32_t addr);
 static uint32_t fal_program (uint32_t dst, void const * src, uint32_t len);
 static uint32_t fal_read (void* dst, uint32_t src, uint32_t len);
 static bool fal_verify (uint32_t addr, void const * buf, uint32_t len);
@@ -124,7 +124,7 @@ bool flash_nrf5x_erase(uint32_t addr)
 //--------------------------------------------------------------------+
 // HAL for caching
 //--------------------------------------------------------------------+
-static bool fal_erase (uint32_t addr)
+bool fal_erase (uint32_t addr)
 {
   // Init semaphore for first call
   if ( _sem == NULL ) {
@@ -145,7 +145,7 @@ static bool fal_erase (uint32_t addr)
 }
 
 // helper for fal_program()
-static bool fal_sub_program(uint32_t dst, void const * src, uint32_t len) {
+bool fal_sub_program(uint32_t dst, void const * src, uint32_t len) {
   for (uint8_t attempt = 0; attempt < MAX_RETRY; ++attempt) {
     if (NRF_SUCCESS == sd_flash_write((uint32_t*) dst, (uint32_t const *) src, len/4)) {
       if (NRF_SUCCESS == wait_for_async_flash_op_completion()) {

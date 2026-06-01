@@ -80,6 +80,9 @@ static inline uint16_t flash_nrf5x_read32 (uint32_t src)
   return num;
 }
 
+// make these available externally, so that others can call them directly to bypass the cache
+bool fal_erase(uint32_t addr);
+bool fal_sub_program(uint32_t dst, const void *src, uint32_t len);
 
 #ifdef __cplusplus
  }
