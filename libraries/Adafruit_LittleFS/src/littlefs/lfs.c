@@ -3915,9 +3915,13 @@ static int lfs_remove_(lfs_t *lfs, const char *path) {
             return err;
         }
 
-        if (dir.m.count > 0 || dir.m.split) {
-            return LFS_ERR_NOTEMPTY;
-        }
+        // NOTE: same change as adafruit made to LFSv1 to allow removing non-empty dirs.
+        // IMPORTANT: we must not nest directories. removing a directory containing directories will result
+        // in issues with orphans containing orphans.
+        // see https://github.com/littlefs-project/littlefs/issues/43 for some discussion.
+        // if (dir.m.count > 0 || dir.m.split) {
+        //     return LFS_ERR_NOTEMPTY;
+        // }
 
         // mark fs as orphaned
         err = lfs_fs_preporphans(lfs, +1);
