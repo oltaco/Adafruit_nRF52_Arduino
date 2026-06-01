@@ -138,6 +138,14 @@ bool InternalFileSystem::begin(void)
   // failed to mount, erase all sector then format and mount again
   if ( !Adafruit_LittleFS::begin() )
   {
+    // Mount failed, attempt to migrate from LFS1.x
+    if (lfs_migrate(&_lfs, &_InternalFSConfig) == LFS_ERR_OK) {
+      // Migration to LFS2 successful, try to remount
+      if (Adafruit_LittleFS::begin()) {
+        return true;
+      }
+    }
+    // No LFS1.x filesystem or migration failed, wipe and start fresh.
     // Erase all sectors of internal flash region for Filesystem.
     for ( uint32_t addr = LFS_FLASH_ADDR; addr < LFS_FLASH_ADDR + LFS_FLASH_TOTAL_SIZE; addr += FLASH_NRF52_PAGE_SIZE )
     {
